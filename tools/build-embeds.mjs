@@ -1,12 +1,16 @@
-// 인식 문구(tools/prompts.json)를 CLIP 텍스트 임베딩으로 바꿔 js/embeds.js 를 만듭니다.
+// js/data.js 의 물건별 인식 문구와 tools/negatives.json 을 CLIP 텍스트 임베딩으로 바꿔 js/embeds.js 를 만듭니다.
 // 사용법: @huggingface/transformers 가 설치된 폴더에서
-//   node build-embeds.mjs <prompts.json 경로> <출력 embeds.js 경로>
+//   node build-embeds.mjs <게임 폴더 경로>
 import { AutoTokenizer, CLIPTextModelWithProjection } from '@huggingface/transformers';
 import fs from 'node:fs';
 
 const MODEL = 'Xenova/clip-vit-base-patch32';
-const [, , inPath, outPath] = process.argv;
-const cfg = JSON.parse(fs.readFileSync(inPath, 'utf8'));
+const root = process.argv[2];
+const outPath = root + '/js/embeds.js';
+const win = {};
+new Function('window', fs.readFileSync(root + '/js/data.js', 'utf8'))(win);
+const cfg = { items: {}, negatives: JSON.parse(fs.readFileSync(root + '/tools/negatives.json', 'utf8')).negatives };
+win.GAME_DATA.PLACES.forEach(p => p.zones.forEach(z => z.items.forEach((it, i) => { cfg.items[p.id + '/' + z.id + '/' + i] = it[3]; })));
 
 const tokenizer = await AutoTokenizer.from_pretrained(MODEL);
 const model = await CLIPTextModelWithProjection.from_pretrained(MODEL, { dtype: 'fp32' });

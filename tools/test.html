@@ -14,7 +14,7 @@
   const dec = b => { const s = atob(b), v = new Float32Array(s.length); let n = 0; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); v[i] = c > 127 ? c - 256 : c; n += v[i] * v[i]; } n = Math.sqrt(n); return v.map(x => x / n); };
   const items = {}; Object.keys(E.items).forEach(k => items[k] = E.items[k].map(dec));
   const neg = E.negatives.map(dec);
-  const NEG = await (await fetch('prompts.json')).json().then(j => j.negatives);
+  const NEG = await (await fetch('negatives.json')).json().then(j => j.negatives);
   const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
   const w = new Worker('../js/vision-worker.js', { type: 'module' });
   const waiting = {}; let nid = 1, t0 = performance.now();

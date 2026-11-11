@@ -2,7 +2,7 @@
 (function () {
   const D = window.GAME_DATA, $ = id => document.getElementById(id);
   const REGULAR = D.ORDER.filter(id => !D.SUBS[id].special);
-  const KEY = 'molecule-explorer-v1';
+  const KEY = 'molecule-explorer-v2'; // 물건 목록을 바꾸면서 기록 형식이 달라져 새 키 사용
 
   // ── 저장 ──
   let save = { found: {} };
@@ -267,7 +267,7 @@
     m.atoms.forEach(a => { if (seen.indexOf(a.el) < 0) seen.push(a.el); });
     $('sh-legend').innerHTML = seen.map(k => '<span><i style="background:' + (k === '*' ? 'transparent;border-style:dashed' : Chem.EL[k].c) + '"></i>' + (k === '*' ? '' : k + ' ') + Chem.EL[k].k + '</span>').join('');
     const ul = $('sh-sources'); ul.innerHTML = '';
-    if (s.special) ul.appendChild(el('li', 'ok', '🧪 락스 + 🧪 묽은 염산 <b>섞으면 위험!</b>'));
+    if (s.special) ul.appendChild(el('li', 'ok', s.special.mix + ' <b>섞으면 위험!</b>'));
     s.sources.forEach(src => {
       const ok = hasSrc(src);
       ul.appendChild(el('li', ok ? 'ok' : '', src.emoji + ' ' + src.place.name + ' › ' + src.zone.name + ' › ' + src.item + '<b>' + (ok ? '✓ 발견' : '미발견') + '</b>'));
