@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0a0f1f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>분자 탐험대</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- 홈 -->
+  <section id="s-home" class="screen active">
+    <header class="hero">
+      <div class="logo">⚛️</div>
+      <h1>분자 탐험대</h1>
+      <p>우리 주변에 숨은 화학 물질을 찾아 도감을 완성하세요</p>
+    </header>
+    <div class="total">
+      <div class="total-row"><span>도감 수집</span><b id="home-count">0 / 0</b></div>
+      <div class="bar"><i id="home-bar"></i></div>
+    </div>
+    <h2 class="sec">지금 어디에 있나요?</h2>
+    <div id="place-list" class="place-list"></div>
+    <button id="btn-dex" class="btn wide">📖 도감 보기</button>
+    <button id="btn-reset" class="link">기록 초기화</button>
+  </section>
+
+  <!-- 구역 선택 -->
+  <section id="s-zones" class="screen">
+    <div class="topbar"><button class="back" data-go="home">‹</button><h2 id="zones-title"></h2></div>
+    <p class="guide">탐색할 구역을 고르세요. 카메라가 켜지면 휴대폰을 돌려 주변을 둘러보세요.</p>
+    <div id="zone-list" class="zone-list"></div>
+  </section>
+
+  <!-- AR 탐색 -->
+  <section id="s-ar" class="screen ar">
+    <video id="cam" playsinline muted autoplay></video>
+    <div id="ar-bg"></div>
+    <div id="orbs"></div>
+    <div class="reticle"></div>
+    <div class="ar-top">
+      <button class="back" id="ar-back">‹</button>
+      <div class="ar-title"><b id="ar-zone"></b><span id="ar-count"></span></div>
+      <button class="chip" id="ar-dex">📖</button>
+    </div>
+    <div id="ar-arrow-l" class="ar-arrow l">◀<span>신호</span></div>
+    <div id="ar-arrow-r" class="ar-arrow r"><span>신호</span>▶</div>
+    <div class="ar-bottom"><div id="ar-hint"></div></div>
+  </section>
+
+  <!-- 도감 -->
+  <section id="s-dex" class="screen">
+    <div class="topbar"><button class="back" id="dex-back">‹</button><h2>화학 물질 도감</h2><b id="dex-count" class="count"></b></div>
+    <div id="dex-filters" class="filters"></div>
+    <div id="dex-grid" class="dex-grid"></div>
+  </section>
+
+  <!-- 물질 카드 (채집 / 상세) -->
+  <div id="sheet" class="sheet hidden">
+    <div class="sheet-inner">
+      <button id="sheet-close" class="close">✕</button>
+      <div class="sheet-head">
+        <span id="sh-no" class="no"></span>
+        <span id="sh-badge" class="badge"></span>
+      </div>
+      <h2 id="sh-name"></h2>
+      <div id="sh-formula" class="formula"></div>
+      <div class="mol-wrap">
+        <canvas id="mol"></canvas>
+        <div id="sh-scanline" class="scanline"></div>
+        <div class="mol-tip">손가락으로 돌려 보세요</div>
+      </div>
+      <div id="sh-scan" class="scan-area">
+        <p id="sh-signal"></p>
+        <button id="btn-scan" class="scan-btn"><i id="scan-fill"></i><span>길게 눌러 분석하기</span></button>
+      </div>
+      <div id="sh-info" class="info">
+        <div id="sh-new" class="newtag"></div>
+        <p id="sh-desc" class="desc"></p>
+        <p id="sh-simple" class="simple"></p>
+        <div id="sh-legend" class="legend"></div>
+        <h3>어디에 있을까?</h3>
+        <ul id="sh-sources" class="sources"></ul>
+        <button id="btn-ok" class="btn wide">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+</div>
+<script src="js/data.js"></script>
+<script src="js/chem.js"></script>
+<script src="js/render.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

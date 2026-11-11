@@ -1,0 +1,11 @@
+{
+  "name": "분자 탐험대",
+  "short_name": "분자 탐험대",
+  "description": "우리 주변의 화학 물질을 찾아 도감을 완성하는 게임",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0f1f",
+  "theme_color": "#0a0f1f",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
