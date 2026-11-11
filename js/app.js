@@ -1,4 +1,4 @@
-// 분자 탐험대 — 화면 전환, AR 탐색, 채집, 도감
+// 분자 탐험대 — 화면 전환, 카메라 실물 인식, 채집, 도감
 (function () {
   const D = window.GAME_DATA, $ = id => document.getElementById(id);
   const REGULAR = D.ORDER.filter(id => !D.SUBS[id].special);
@@ -54,119 +54,180 @@
     show('zones');
   }
 
-  // ── AR 탐색 ──
-  const ar = { orbs: [], raf: 0, stream: null, gyro: null, gyroOn: false, dyaw: 0, dpitch: 0, yaw: 0, pitch: 0, ptr: null };
-  const wrap = a => { a = (a + 180) % 360; if (a < 0) a += 360; return a - 180; };
-
-  function onOrient(e) {
-    if (e.alpha == null || e.beta == null) return;
-    const r = Math.PI / 180, a = e.alpha * r, b = e.beta * r, g = (e.gamma || 0) * r;
-    const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
-    // 휴대폰 뒷면(카메라)이 향하는 방향
-    const fx = -(cG * sA * sB + cA * sG), fy = -(sA * sG - cA * cG * sB), fz = -cB * cG;
-    const yaw = Math.atan2(fx, fy) / r, pitch = Math.asin(Math.max(-1, Math.min(1, fz))) / r;
-    if (!ar.gyro) ar.gyro = { yaw, pitch };
-    else { ar.gyro.yaw += wrap(yaw - ar.gyro.yaw) * 0.35; ar.gyro.pitch += (pitch - ar.gyro.pitch) * 0.35; }
-    if (!ar.gyroOn) { ar.gyroOn = true; ar.dyaw -= ar.gyro.yaw; ar.dpitch = 0; setHint(); }
+  // ── 이미지 인식 (기기 안에서 실행) ──
+  const vis = { worker: null, ready: false, failed: false, pct: 0, emb: null, nextId: 1, waiting: {} };
+  function decode(b64) {
+    const bin = atob(b64), v = new Float32Array(bin.length);
+    let n = 0;
+    for (let i = 0; i < bin.length; i++) { const c = bin.charCodeAt(i); v[i] = c > 127 ? c - 256 : c; n += v[i] * v[i]; }
+    n = Math.sqrt(n) || 1;
+    for (let i = 0; i < v.length; i++) v[i] /= n;
+    return v;
   }
-  function setHint() {
-    $('ar-hint').textContent = ar.gyroOn ? '휴대폰을 돌려 주변을 둘러보고, 신호를 터치하세요' : '화면을 밀어 주변을 둘러보고, 신호를 터치하세요';
+  function initVision() {
+    if (vis.worker || vis.failed) return;
+    const E = window.CLIP_EMBEDS;
+    if (!E || !window.Worker) { vis.failed = true; return; }
+    vis.emb = { items: {}, neg: E.negatives.map(decode) };
+    Object.keys(E.items).forEach(k => { vis.emb.items[k] = E.items[k].map(decode); });
+    try { vis.worker = new Worker('js/vision-worker.js', { type: 'module' }); } catch (e) { vis.failed = true; return; }
+    vis.worker.onmessage = e => {
+      const m = e.data;
+      if (m.type === 'progress') { vis.pct = m.pct; setStatus(); }
+      else if (m.type === 'ready') { vis.ready = true; setStatus(); scanSoon(300); }
+      else if (m.type === 'embed') { const cb = vis.waiting[m.id]; delete vis.waiting[m.id]; if (cb) cb(new Float32Array(m.vec)); }
+      else if (m.type === 'error') {
+        const cb = vis.waiting[m.id]; delete vis.waiting[m.id];
+        if (cb) cb(null); else { vis.failed = true; setStatus(); }
+      }
+    };
+    vis.worker.onerror = () => { vis.failed = true; setStatus(); };
+    vis.worker.postMessage({ type: 'init' });
+  }
+  const snap = document.createElement('canvas');
+  snap.width = snap.height = 224;
+  // source(영상·사진)의 가운데 부분을 잘라 임베딩으로 변환
+  function embedFrom(source, sw, sh, frac) {
+    return new Promise(res => {
+      if (!vis.ready || !sw || !sh) return res(null);
+      const side = Math.min(sw, sh) * frac, ctx = snap.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(source, (sw - side) / 2, (sh - side) / 2, side, side, 0, 0, 224, 224);
+      const d = ctx.getImageData(0, 0, 224, 224), id = vis.nextId++;
+      vis.waiting[id] = res;
+      vis.worker.postMessage({ type: 'embed', id, data: d.data.buffer, w: 224, h: 224 }, [d.data.buffer]);
+    });
+  }
+  const STRONG = 0.02, WEAK = -0.005; // 인식 기준(여유값). 높일수록 엄격해짐
+  const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+  // 현재 구역의 물건들을 '상관없는 것' 문구와 비교해 여유값 m 계산 (m이 클수록 확실)
+  function classify(vec, zone) {
+    const prefix = curPlace.id + '/' + zone.id + '/';
+    const score = k => Math.max.apply(null, (vis.emb.items[k] || []).map(e => dot(vec, e)));
+    const rows = zone.items.map((it, i) => ({ index: i, s: score(prefix + i) }));
+    // 다른 구역의 물건이 훨씬 더 잘 맞으면(예: 주방에서 비누를 비춤) 이 구역 물건이 아님
+    let other = -1;
+    Object.keys(vis.emb.items).forEach(k => { if (k.indexOf(prefix) !== 0) other = Math.max(other, score(k)); });
+    const neg = Math.max.apply(null, vis.emb.neg.map(e => dot(vec, e)));
+    rows.forEach(r => { r.m = r.s < 0.25 || r.s < other - 0.012 ? -1 : r.s - neg; });
+    return rows.sort((a, b) => b.m - a.m);
   }
 
+  // ── 카메라 탐색 ──
+  const ar = { stream: null, timer: 0, busy: false, lastTop: -1, shown: [], shownUntil: 0, photo: false, camOk: false };
+  function setStatus(msg) {
+    const s = $('ar-status');
+    if (msg) { s.textContent = msg; return; }
+    if (vis.failed) s.textContent = '⚠ 인식 모델을 불러오지 못했어요. 인터넷 연결을 확인하고 다시 들어와 주세요.';
+    else if (!vis.ready) s.textContent = '🧠 AI 인식 모델 준비 중… ' + (vis.pct ? vis.pct + '%' : '') + ' (처음 한 번만 내려받아요)';
+    else if (ar.photo) s.textContent = '🖼️ 사진을 분석했어요';
+    else if (!ar.camOk) s.textContent = '카메라를 켤 수 없어요. 아래 버튼으로 물건 사진을 찍어 주세요.';
+    else s.textContent = '🔍 찾을 물건을 네모 안에 비춰 주세요';
+  }
   function enterZone(z) {
     curZone = z;
     $('ar-zone').textContent = z.emoji + ' ' + z.name;
-    const box = $('orbs'); box.innerHTML = ''; ar.orbs = [];
-    const n = z.items.length;
-    let seed = 7;
-    const rnd = () => { seed = (seed * 16807 + z.id.length * 31) % 2147483647; return (seed % 1000) / 1000; };
-    z.sources.forEach(src => {
-      const sibs = z.sources.filter(s => s.itemIndex === src.itemIndex), k = sibs.indexOf(src);
-      const yaw = src.itemIndex * (360 / n) + (k - (sibs.length - 1) / 2) * 17 + (rnd() - 0.5) * 8;
-      const pitch = -16 + rnd() * 38 + (k % 2 ? 9 : 0);
-      const e = el('div', 'orb', '<div class="ball">' + src.emoji + '</div><span class="lb"></span>');
-      box.appendChild(e);
-      const orb = { src, yaw, pitch, e };
-      e._orb = orb; ar.orbs.push(orb);
-    });
-    refreshOrbs();
-    ar.dyaw = 0; ar.dpitch = 0; ar.gyro = null; ar.gyroOn = false;
-    setHint();
+    ar.lastTop = -1; ar.shown = []; ar.shownUntil = 0; ar.camOk = false;
+    closePhoto(true);
+    renderZoneHud();
     show('ar');
-    startSensors();
-    if (!ar.raf) ar.raf = requestAnimationFrame(arLoop);
+    initVision();
+    setStatus();
+    startCamera();
   }
-  function refreshOrbs() {
-    ar.orbs.forEach(o => {
-      const f = hasSrc(o.src);
-      o.e.classList.toggle('found', f);
-      o.e.querySelector('.lb').textContent = f ? D.SUBS[o.src.sub].name : o.src.item;
+  function renderZoneHud() {
+    if (!curZone) return;
+    const z = curZone;
+    $('ar-count').textContent = '발견 ' + z.sources.filter(hasSrc).length + ' / ' + z.sources.length;
+    $('ar-list').innerHTML = z.items.map((it, i) => {
+      const srcs = z.sources.filter(s => s.itemIndex === i), got = srcs.filter(hasSrc).length;
+      return '<span class="tgt' + (got === srcs.length ? ' done' : '') + '">' + it[1] + ' ' + it[0] + ' <b>' + (got === srcs.length ? '✓' : got + '/' + srcs.length) + '</b></span>';
+    }).join('');
+    renderFound();
+  }
+  // 인식된 물건과 그 속 물질 버튼
+  function renderFound() {
+    const box = $('ar-found'); box.innerHTML = '';
+    ar.shown.forEach(i => {
+      const it = curZone.items[i];
+      const row = el('div', 'det', '<div class="det-t">' + it[1] + ' <b>' + it[0] + '</b>을(를) 찾았어요!</div>');
+      const btns = el('div', 'det-b');
+      curZone.sources.filter(s => s.itemIndex === i).forEach(src => {
+        const f = hasSrc(src);
+        const b = el('button', 'sub' + (f ? ' got' : ''), f ? '✓ ' + D.SUBS[src.sub].name : '❓ 물질 분석하기');
+        b.onclick = () => openSheet(src.sub, src);
+        btns.appendChild(b);
+      });
+      row.appendChild(btns); box.appendChild(row);
     });
-    if (curZone) $('ar-count').textContent = '발견 ' + curZone.sources.filter(hasSrc).length + ' / ' + curZone.sources.length;
+    $('s-ar').classList.toggle('detected', ar.shown.length > 0);
   }
-  function startSensors() {
+  function startCamera() {
     const sec = $('s-ar'), v = $('cam');
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false }).then(st => {
-        if (current !== 'ar') { st.getTracks().forEach(t => t.stop()); return; }
-        ar.stream = st; v.srcObject = st; sec.classList.add('has-cam');
-        const p = v.play(); if (p && p.catch) p.catch(() => {});
-      }).catch(() => { toast('카메라를 쓸 수 없어 가상 배경으로 탐색해요'); });
-    }
-    const listen = () => window.addEventListener('deviceorientation', onOrient);
-    if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      DeviceOrientationEvent.requestPermission().then(r => { if (r === 'granted') listen(); }).catch(() => {});
-    } else if (window.DeviceOrientationEvent) listen();
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return;
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }, audio: false }).then(st => {
+      if (current !== 'ar') { st.getTracks().forEach(t => t.stop()); return; }
+      ar.stream = st; v.srcObject = st; sec.classList.add('has-cam'); ar.camOk = true;
+      const p = v.play(); if (p && p.catch) p.catch(() => {});
+      setStatus(); scanSoon(600);
+    }).catch(() => { ar.camOk = false; setStatus(); });
   }
   function stopAR() {
-    cancelAnimationFrame(ar.raf); ar.raf = 0;
-    window.removeEventListener('deviceorientation', onOrient);
+    clearTimeout(ar.timer); ar.timer = 0;
     if (ar.stream) { ar.stream.getTracks().forEach(t => t.stop()); ar.stream = null; }
-    $('cam').srcObject = null; $('s-ar').classList.remove('has-cam');
+    $('cam').srcObject = null; $('s-ar').classList.remove('has-cam', 'detected');
   }
-  function arLoop() {
-    ar.raf = requestAnimationFrame(arLoop);
-    const sec = $('s-ar'), W = sec.clientWidth, H = sec.clientHeight;
-    if (!W) return;
-    const rad = Math.PI / 180, f = W / 2 / Math.tan(32 * rad);
-    ar.yaw = (ar.gyro ? ar.gyro.yaw : 0) + ar.dyaw;
-    ar.pitch = Math.max(-70, Math.min(70, (ar.gyro ? ar.gyro.pitch : 0) + ar.dpitch));
-    let best = null;
-    ar.orbs.forEach(o => {
-      const dx = wrap(o.yaw - ar.yaw), dy = o.pitch - ar.pitch;
-      const vis = Math.abs(dx) < 75;
-      o.e.style.display = vis ? '' : 'none';
-      if (vis) {
-        const x = W / 2 + Math.tan(dx * rad) * f, y = H / 2 - Math.tan(dy * rad) * f;
-        const s = 1 - Math.min(0.3, Math.abs(dx) / 150);
-        o.e.style.transform = 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px) scale(' + s.toFixed(3) + ')';
-      }
-      if (!hasSrc(o.src) && (!best || Math.abs(dx) < Math.abs(best))) best = dx;
-    });
-    $('ar-arrow-l').classList.toggle('on', best != null && best < -26);
-    $('ar-arrow-r').classList.toggle('on', best != null && best > 26);
+  function scanSoon(ms) { clearTimeout(ar.timer); ar.timer = setTimeout(scanLive, ms); }
+  async function scanLive() {
+    if (current !== 'ar') return;
+    const v = $('cam'), sheetOpen = !$('sheet').classList.contains('hidden');
+    if (!vis.ready || ar.busy || ar.photo || sheetOpen || !ar.camOk || v.readyState < 2) return scanSoon(500);
+    ar.busy = true;
+    const zone = curZone, vec = await embedFrom(v, v.videoWidth, v.videoHeight, 0.72);
+    ar.busy = false;
+    if (current !== 'ar' || zone !== curZone) return;
+    if (vec && !ar.photo) {
+      const r = classify(vec, zone), top = r[0];
+      // 확실하면 바로, 애매하면 두 번 연속 같은 물건일 때 인정
+      if (top.m >= STRONG || (top.m >= WEAK && ar.lastTop === top.index)) {
+        const list = [top.index];
+        if (r[1] && r[1].m >= WEAK && r[1].s >= top.s - 0.015) list.push(r[1].index);
+        if (list.join() !== ar.shown.join()) { ar.shown = list; renderFound(); if (navigator.vibrate) { try { navigator.vibrate(30); } catch (e) { /* 무시 */ } } }
+        ar.shownUntil = Date.now() + 6000;
+      } else if (ar.shown.length && Date.now() > ar.shownUntil) { ar.shown = []; renderFound(); }
+      ar.lastTop = top.m >= WEAK ? top.index : -1;
+    }
+    scanSoon(350);
   }
-  // 화면 밀기(둘러보기)와 터치(채집) 구분
-  (function () {
-    const sec = $('s-ar');
-    sec.addEventListener('pointerdown', e => {
-      if (e.target.closest('.ar-top')) return;
-      ar.ptr = { x: e.clientX, y: e.clientY, moved: 0, orb: e.target.closest('.orb') };
-    });
-    sec.addEventListener('pointermove', e => {
-      if (!ar.ptr) return;
-      const dx = e.clientX - ar.ptr.x, dy = e.clientY - ar.ptr.y;
-      ar.ptr.moved += Math.abs(dx) + Math.abs(dy);
-      ar.ptr.x = e.clientX; ar.ptr.y = e.clientY;
-      if (ar.ptr.moved > 8) { ar.dyaw -= dx * 0.16; ar.dpitch += dy * 0.16; }
-    });
-    const end = () => {
-      const p = ar.ptr; ar.ptr = null;
-      if (p && p.orb && p.moved <= 8 && p.orb._orb) openSheet(p.orb._orb.src.sub, p.orb._orb.src);
+  // 사진으로 찾기 (카메라를 쓸 수 없을 때 / 찍어 둔 사진)
+  function closePhoto(silent) {
+    ar.photo = false;
+    const img = $('ar-photo');
+    if (img.src) { try { URL.revokeObjectURL(img.src); } catch (e) { /* 무시 */ } }
+    img.removeAttribute('src');
+    $('s-ar').classList.remove('has-photo');
+    if (!silent) { ar.shown = []; renderFound(); setStatus(); scanSoon(300); }
+  }
+  $('ar-file').addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    if (!vis.ready) return toast(vis.failed ? '인식 모델을 불러오지 못했어요' : 'AI 인식 모델을 준비하고 있어요. 잠시 후 다시 해 주세요');
+    const img = $('ar-photo');
+    closePhoto(true);
+    img.onload = async () => {
+      ar.photo = true; $('s-ar').classList.add('has-photo');
+      setStatus('🔍 사진을 분석하는 중…');
+      const zone = curZone, vec = await embedFrom(img, img.naturalWidth, img.naturalHeight, 1);
+      if (!ar.photo || zone !== curZone) return;
+      const r = vec ? classify(vec, zone) : [];
+      ar.shown = r.length && r[0].m >= WEAK ? [r[0].index].concat(r[1] && r[1].m >= WEAK && r[1].s >= r[0].s - 0.015 ? [r[1].index] : []) : [];
+      renderFound();
+      setStatus(ar.shown.length ? null : '이 구역의 물건을 찾지 못했어요. 물건이 크게 보이도록 다시 찍어 주세요.');
     };
-    sec.addEventListener('pointerup', end);
-    sec.addEventListener('pointercancel', () => { ar.ptr = null; });
-  })();
+    img.onerror = () => toast('사진을 열 수 없어요');
+    img.src = URL.createObjectURL(f);
+  });
+  $('ar-photo-close').onclick = () => closePhoto(false);
 
   // ── 물질 카드 (채집·상세) ──
   const view = new MolView($('mol'));
@@ -188,11 +249,11 @@
       $('sh-badge').textContent = '미확인';
       $('sh-name').textContent = '???';
       $('sh-formula').textContent = '';
-      $('sh-signal').textContent = src.emoji + ' ' + src.item + '에서 물질 신호를 찾았어요!';
+      $('sh-signal').textContent = src.emoji + ' ' + src.item + ' 속에서 물질을 찾았어요!';
     } else fillInfo(false);
   }
   function fillInfo(isNew, newPlace) {
-    const s = sheet.sub, g = D.GROUPS[s.group];
+    const s = sheet.sub;
     $('sh-no').textContent = s.special ? '특별 카드' : 'No. ' + String(s.no).padStart(2, '0');
     $('sh-badge').textContent = s.cls;
     $('sh-name').textContent = s.name;
@@ -216,7 +277,7 @@
   function closeSheet() {
     $('sheet').classList.add('hidden');
     view.stop(); cancelAnimationFrame(sheet.raf); sheet.raf = 0; sheet.holding = false;
-    if (current === 'ar') refreshOrbs();
+    if (current === 'ar') { renderZoneHud(); ar.shownUntil = Date.now() + 6000; }
     if (current === 'dex') renderDex();
     if (sheet.wasNew) {
       sheet.wasNew = false;
@@ -301,7 +362,7 @@
   $('btn-reset').onclick = () => {
     if (confirm('지금까지 모은 도감 기록을 모두 지울까요?')) { save = { found: {} }; persist(); renderHome(); toast('기록을 초기화했어요'); }
   };
-  document.addEventListener('visibilitychange', () => { if (document.hidden && current === 'ar') openPlace(curPlace); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && current === 'ar') scanSoon(400); });
 
   renderHome();
 })();

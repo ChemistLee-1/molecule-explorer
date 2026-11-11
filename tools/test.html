@@ -1,0 +1,68 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>인식 시험</title>
+<body style="font:14px/1.5 system-ui;background:#111;color:#eee;padding:16px">
+<h3>실물 인식 시험 (개발용)</h3>
+<p>위키백과 대표 사진으로 구역별 인식 결과를 확인합니다. 주소 뒤에 <code>?t=Vinegar,Chalk</code> 처럼 제목을 줄 수 있습니다.</p>
+<pre id="out">준비 중…</pre>
+<script src="../js/data.js"></script>
+<script src="../js/embeds.js"></script>
+<script>
+(async function () {
+  const out = document.getElementById('out'), log = s => { out.textContent += '\n' + s; };
+  const D = GAME_DATA, E = CLIP_EMBEDS;
+  const dec = b => { const s = atob(b), v = new Float32Array(s.length); let n = 0; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); v[i] = c > 127 ? c - 256 : c; n += v[i] * v[i]; } n = Math.sqrt(n); return v.map(x => x / n); };
+  const items = {}; Object.keys(E.items).forEach(k => items[k] = E.items[k].map(dec));
+  const neg = E.negatives.map(dec);
+  const NEG = await (await fetch('prompts.json')).json().then(j => j.negatives);
+  const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+  const w = new Worker('../js/vision-worker.js', { type: 'module' });
+  const waiting = {}; let nid = 1, t0 = performance.now();
+  await new Promise((res, rej) => {
+    w.onmessage = e => {
+      const m = e.data;
+      if (m.type === 'progress') out.textContent = '모델 내려받는 중 ' + m.pct + '%';
+      else if (m.type === 'ready') res();
+      else if (m.type === 'embed') waiting[m.id](new Float32Array(m.vec));
+      else if (m.type === 'error') { log('오류: ' + m.message); if (waiting[m.id]) waiting[m.id](null); else rej(m.message); }
+    };
+    w.postMessage({ type: 'init' });
+  });
+  out.textContent = '모델 준비 ' + Math.round(performance.now() - t0) + 'ms';
+  const cv = document.createElement('canvas'); cv.width = cv.height = 224;
+  function embed(img) {
+    return new Promise(res => {
+      const side = Math.min(img.naturalWidth, img.naturalHeight), ctx = cv.getContext('2d');
+      ctx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 224, 224);
+      const d = ctx.getImageData(0, 0, 224, 224), id = nid++;
+      waiting[id] = res; w.postMessage({ type: 'embed', id, data: d.data.buffer, w: 224, h: 224 }, [d.data.buffer]);
+    });
+  }
+  function classify(vec, p, z) {
+    const pre = p.id + '/' + z.id + '/', sc = k => Math.max(...items[k].map(e => dot(vec, e)));
+    const rows = z.items.map((it, i) => ({ name: it[0], s: sc(pre + i) }));
+    let other = -1; Object.keys(items).forEach(k => { if (k.indexOf(pre) !== 0) other = Math.max(other, sc(k)); });
+    const nmax = Math.max(...neg.map(e => dot(vec, e)));
+    rows.forEach(r => r.m = r.s < 0.25 || r.s < other - 0.012 ? -1 : r.s - nmax);
+    return rows.sort((a, b) => b.m - a.m);
+  }
+  const q = new URLSearchParams(location.search).get('t');
+  const titles = (q || 'Vinegar,Chalk,Pencil,Bleach,Toothpaste,Soap,Leaf,Ant,Bronze_sculpture,AA_battery,Cat,Laptop,Couch,Car').split(',');
+  for (const t of titles) {
+    try {
+      const j = await (await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(t))).json();
+      const img = new Image(); img.crossOrigin = 'anonymous';
+      await new Promise((ok, no) => { img.onload = ok; img.onerror = no; img.src = j.thumbnail.source; });
+      const t1 = performance.now(), vec = await embed(img), ms = Math.round(performance.now() - t1);
+      const hits = [];
+      D.PLACES.forEach(p => p.zones.forEach(z => { const r = classify(vec, p, z); if (r[0].m >= -0.005) hits.push(p.name + '›' + z.name + ': ' + r[0].name + (r[0].m >= 0.02 ? ' 확실' : ' 애매') + ' (cos ' + r[0].s.toFixed(3) + ')'); }));
+      // 진단: 전체 물건 중 가장 잘 맞는 것 2개와 가장 잘 맞는 '상관없는 것'
+      const all = Object.keys(items).map(k => ({ k, s: Math.max(...items[k].map(e => dot(vec, e))) })).sort((a, b) => b.s - a.s);
+      const nb = neg.map((e, i) => ({ i, s: dot(vec, e) })).sort((a, b) => b.s - a.s)[0];
+      const nm = k => { const a = k.split('/'), p = D.PLACES.find(x => x.id === a[0]), z = p.zones.find(x => x.id === a[1]); return z.items[+a[2]][0]; };
+      log(t.padEnd(18) + ms + 'ms  ' + (hits.join(' | ') || '(인식 없음)') + '   [물건 ' + nm(all[0].k) + ' ' + all[0].s.toFixed(3) + ', ' + nm(all[1].k) + ' ' + all[1].s.toFixed(3) + ' / 제외 ' + NEG[nb.i] + ' ' + nb.s.toFixed(3) + ']');
+    } catch (e) { log(t + ' 실패: ' + e); }
+  }
+  log('끝');
+})();
+</script>

@@ -34,24 +34,31 @@
   <!-- 구역 선택 -->
   <section id="s-zones" class="screen">
     <div class="topbar"><button class="back" data-go="home">‹</button><h2 id="zones-title"></h2></div>
-    <p class="guide">탐색할 구역을 고르세요. 카메라가 켜지면 휴대폰을 돌려 주변을 둘러보세요.</p>
+    <p class="guide">탐색할 구역을 고르세요. 카메라가 켜지면 그 구역에 있는 실제 물건을 비춰 보세요.</p>
     <div id="zone-list" class="zone-list"></div>
   </section>
 
-  <!-- AR 탐색 -->
+  <!-- 카메라 탐색 -->
   <section id="s-ar" class="screen ar">
     <video id="cam" playsinline muted autoplay></video>
     <div id="ar-bg"></div>
-    <div id="orbs"></div>
-    <div class="reticle"></div>
+    <img id="ar-photo" alt="">
+    <div class="frame"><i></i><i></i><i></i><i></i></div>
     <div class="ar-top">
       <button class="back" id="ar-back">‹</button>
       <div class="ar-title"><b id="ar-zone"></b><span id="ar-count"></span></div>
       <button class="chip" id="ar-dex">📖</button>
     </div>
-    <div id="ar-arrow-l" class="ar-arrow l">◀<span>신호</span></div>
-    <div id="ar-arrow-r" class="ar-arrow r"><span>신호</span>▶</div>
-    <div class="ar-bottom"><div id="ar-hint"></div></div>
+    <div id="ar-status" class="ar-status"></div>
+    <div class="ar-bottom">
+      <div id="ar-found" class="ar-found"></div>
+      <div class="ar-list-t">이 구역에서 찾을 물건</div>
+      <div id="ar-list" class="ar-list"></div>
+      <div class="ar-actions">
+        <label class="btn2">📷 사진으로 찾기<input type="file" accept="image/*" id="ar-file" hidden></label>
+        <button class="btn2" id="ar-photo-close">↩ 카메라로 돌아가기</button>
+      </div>
+    </div>
   </section>
 
   <!-- 도감 -->
@@ -95,6 +102,7 @@
   <div id="toast" class="toast"></div>
 </div>
 <script src="js/data.js"></script>
+<script src="js/embeds.js"></script>
 <script src="js/chem.js"></script>
 <script src="js/render.js"></script>
 <script src="js/app.js"></script>
