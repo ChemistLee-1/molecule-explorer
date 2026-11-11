@@ -91,13 +91,6 @@ window.MolView = (function () {
         g.addColorStop(0, pal.hi); g.addColorStop(0.55, pal.mid); g.addColorStop(1, pal.lo);
         ctx.fillStyle = g;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
-        if (p.a.charge) {
-          const q = Math.abs(p.a.charge);
-          ctx.fillStyle = 'rgba(8,12,28,.85)';
-          ctx.font = '700 ' + Math.max(9, p.r * 0.95) + 'px system-ui,sans-serif';
-          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.fillText((q > 1 ? q : '') + (p.a.charge > 0 ? '+' : '−'), p.x, p.y + p.r * 0.04);
-        }
       }
     }
   };
